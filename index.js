@@ -1,20 +1,19 @@
-import express from 'express'
-import { Server } from 'socket.io'
-import path from 'path'
-import { fileURLToPath } from 'url'
+const { Server } = require('socket.io')
+const path = require('path')
+const { fileURLToPath } = require('url')
+const config = require('./utils/config')
+const logger = require('./utils/logger')
+const app = require('./app')
+const userFunc = require('./functions/user')
+const msgFunc = require('./functions/message')
+const roomFunc = require('./functions/room')
+const requestFunc = require('./functions/request')
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
 
-const PORT = process.env.PORT || 3500
 const ADMIN = "Admin"
 
-const app = express()
-
-app.use(express.static(path.join(__dirname, 'public')))
-
-const expressServer = app.listen(PORT, () => {
-    console.log(`listening on port ${PORT}`)
+const expressServer = app.listen(config.PORT, () => {
+    console.log(`listening on port ${config.PORT}`)
 })
 
 //state
@@ -32,77 +31,46 @@ const io = new Server(expressServer, {
 })
 
 io.on('connection', socket => {
-    console.log(`User ${socket.id} connected`)
+    // Listen to someone create new Room 
+    console.log(`user ${socket.id} joined app` )
 
-    socket.emit('message', buildMsg(ADMIN, 'Welcome to chat app'))
- 
-    socket.on('enterRoom', ({ name, room }) => {
-        //leave previous room
-        const prevRoom = getUser(socket.id)?.room
-        console.log('prev', prevRoom)
-        if(prevRoom){
-            socket.leave(prevRoom)
-            io.to(prevRoom).emit('message', buildMsg(ADMIN, `User ${name} has left the room`))
-        }
-        const user = activateUser(socket.id, name, room )
-
-        if(prevRoom){
-            io.to(prevRoom).emit('userList', {
-                users: getUserInRoom(prevRoom)
-            })
-        }
-        socket.join(user.room)
-
-        //send Message to the current user who just joined
-        socket.emit('message', buildMsg(ADMIN, `You have joined ${user.room}`))
-
-        //send Message to other users about this appearance
-        socket.broadcast.emit('message', buildMsg(ADMIN, `User ${user.name} has joined the room!`))
-
-        //update the list of user for the current user's room
-        io.to(user.room).emit('userList', {
-            users: getUserInRoom(user.room)
-        })
-
-        //Update room list for everyone
-        io.emit('roomList', {
-            rooms: getAllActiveRooms()
-        })
+    socket.on('active', ({socketId, username, userId}) => {
+        socket.broadcast.except(socketId).emit('new user', {socketId, username, userId})
     })
 
-    socket.on('disconnect', () => {
-        const user = getUser(socket.id)
-        userLeaveApp(socket.id)
+    socket.on('new user', ({socketId, userId, username}) => {
+        const newUser = {socketId, userId, username}
+        const newUsers = {...UserState.users, newUser}
+        UserState.setUsers(newUsers)
+    })
+
+    scoe
+    socket.on('join-room', ({roomId}) => {
+        socket.join(roomId)
+    })
+
+    socket.on('sendInvite', async ({fromUser, toUser, roomId}) => {
+        const sentInvititation = await requestFunc.create({fromUser, toUser, roomId})
+
+        io.emit('sendInvite', (sentInvititation.id))
+    })
+
+    socket.on('enterRoom', ({username, roomId}) => {
         
-        if( user ){
-            io.to(user.room).emit('message', buildMsg(ADMIN, `User ${user.name} has left the room`))
-
-            io.to(user.room).emit('userList', {
-                users: getUserInRoom(user.room)
-            })
-
-            io.emit('roomList', {
-                rooms: getAllActiveRooms()
-            })
-        }
-
-        console.log(`User ${socket.id} disconnected`)
     })
 
-    socket.on('message', ({text, name}) => {
-        const room = getUser(socket.id)?.room
-        if( room ){
-            io.emit('message', buildMsg(name, text))
-        }
-    })
+    
+    // socket.on( 'message' , ({ username, userId, content, roomId }) => {
+    //     // Push to databse
+    //     axios.post('/api/message/', { 
+    //         userId, roomId, content  
+    //     })
 
-    socket.on('activity', (name) => {
-        const room = getUser(socket.id)?.room
-        if( room ){
-            socket.broadcast.to(room).emit('activity', name)
-        }
-    })
+    //     // Response to frontend
+    //     io.emit('message', buildMsg(username, text))
+    // })
 
+    // socket.on()
 })
 
 function buildMsg( name, text ){
@@ -118,7 +86,7 @@ function buildMsg( name, text ){
 }
 
 //User functions
-function activateUser(id, name, room) {
+function activateUser(id, name, room ) {
     const user = {
         id, name, room
     }
